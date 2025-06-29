@@ -9,6 +9,8 @@
 \usepackage{pgfplotstable,filecontents}
 \usepackage{booktabs}
 
+\pgfplotsset{compat=1.18}
+
 \graphicspath{{./images/}}
 
 \hypersetup{
@@ -38,7 +40,9 @@ The system is composed of three main components:
 \end{itemize}
 Apache Calcite and SYCLDB run in their own processes, while Apache Thrift is used to communicate between them.
 
-To conclude, I'll present performance measures over Apache Calcite query processing and Apache Thrift communication.
+In section \ref{performances}, I'll present performance measures over Apache Calcite query processing and Apache Thrift communication.
+
+In section \ref{setup}, I'll show how to get the system running on a new machine.
 
 \section{Apache Calcite}
 
@@ -191,7 +195,7 @@ After having loaded all the tables, the actual execution step begins. Every oper
           \end{itemize}
 \end{itemize}
 
-\section{Performance measures}
+\section{Performance measures} \label{performances}
 
 In this section I'm going to provide some performance analysis over the overhead of Apache Calcite + Apache Thrift, which impacts the query execution time.
 
@@ -214,5 +218,81 @@ every head row/.style={before row=\toprule,after row=\midrule},
 every last row/.style={after row=\bottomrule}
 ]{performance_results.csv}
 
+\section{Setting up the system} \label{setup}
+
+\subsection{Apache Calcite}
+
+This is the easiest part of the installation. A JVM is all that is needed to run Calcite. The project has been developed with \texttt{openjdk-21-jdk} Debian package.
+
+\subsection{Apache Thrift}
+
+Installing Apache Thrift instead is more complex, since it needs to be compiled from source code.
+
+Install general dependencies:
+\begin{verbatim}
+sudo apt-get update
+sudo apt-get install -y \
+    automake bison flex g++ git libboost-all-dev \
+    libevent-dev libssl-dev libtool make pkg-config
+\end{verbatim}
+
+Install Java dependencies:
+\begin{verbatim}
+sudo apt-get update
+sudo apt-get install -y \
+    ant ant-optional maven openjdk-17-jdk-headless
+export GRADLE_VERSION="8.4"
+wget https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip -q -O \
+    /tmp/gradle-$GRADLE_VERSION-bin.zip \
+    (echo "3e1af3ae886920c3ac87f7a91f816c0c7c436f276a6eefdb3da152100fef72ae  \
+    /tmp/gradle-$GRADLE_VERSION-bin.zip" | sha256sum -c -)
+unzip -d /tmp /tmp/gradle-$GRADLE_VERSION-bin.zip
+sudo mv /tmp/gradle-$GRADLE_VERSION /usr/local/gradle
+sudo ln -s /usr/local/gradle/bin/gradle /usr/local/bin
+sudo update-java-alternatives --set /usr/lib/jvm/java-1.17.0-openjdk-amd64
+\end{verbatim}
+
+Install C++ dependencies:
+\begin{verbatim}
+    sudo apt-get install -y \
+    libboost-all-dev libevent-dev libssl-dev qtbase5-dev qtbase5-dev-tools
+\end{verbatim}
+
+Install Thrift:
+\begin{verbatim}
+wget https://archive.apache.org/dist/thrift/0.21.0/thrift-0.21.0.tar.gz
+tar -xvf thrift-0.21.0.tar.gz
+cd thrift-0.21.0
+./bootstrap.sh
+./configure --without-c_glib --without-python --with-java \
+    --without-py3 --without-kotlin --disable-tutorial --disable-tests
+sudo make -j4
+sudo make install
+\end{verbatim}
+
+In order to test if Thrift is installed:
+\begin{verbatim}
+thrift -version
+\end{verbatim}
+
+In order to compile the generated code for java and c++:
+\begin{verbatim}
+thrift -r --gen java calciteserver.thrift
+thrift -r --gen cpp calciteserver.thrift
+\end{verbatim}
+in the folder containing the thrift file. This will generate two folders, \texttt{gen-java} and \texttt{gen-cpp}. The content of the first one should be put into \texttt{src/main/java/com/eurecom/calcite/thrift} of the Calcite project, while the second folder needs to be put at the top level of the SYCLDB executor project.
+
+\subsection{Running the system}
+In order to run the system, first start the Calcite server:
+\begin{verbatim}
+gradle run
+\end{verbatim}
+in the Calcite project folder.
+
+Then, in a different terminal, run the SYCLDB executor:
+\begin{verbatim}
+make
+./client <query_file_path>
+\end{verbatim}
 
 \end{document}
