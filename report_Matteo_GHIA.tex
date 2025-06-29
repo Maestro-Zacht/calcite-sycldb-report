@@ -6,6 +6,8 @@
 \usepackage{float}
 \usepackage{hyperref}
 \usepackage[parfill]{parskip}
+\usepackage{pgfplotstable,filecontents}
+\usepackage{booktabs}
 
 \graphicspath{{./images/}}
 
@@ -35,6 +37,8 @@ The system is composed of three main components:
     \item \textbf{SYCLDB}, which is a database system that uses SYCL for parallel query execution.
 \end{itemize}
 Apache Calcite and SYCLDB run in their own processes, while Apache Thrift is used to communicate between them.
+
+To conclude, I'll present performance measures over Apache Calcite query processing and Apache Thrift communication.
 
 \section{Apache Calcite}
 
@@ -185,7 +189,30 @@ After having loaded all the tables, the actual execution step begins. Every oper
               \item \textbf{without group by} is just an aggregation that will result in a single value. This is an \texttt{unsigned long long} and it is stored in a column of length 1 which has the \texttt{is\_aggregate\_result} flag set to true.
               \item \textbf{with group by} is more complex. The function passes all the needed pointers and operation data to the \texttt{group\_by\_aggregate} function where everything exceptupdateing the data structure happens. Here we build some support variables: \texttt{max\_values} and \texttt{min\_values} hold each column max and min, and \texttt{prod\_ranges} holds \[ \prod^{col\_num}_i \mathrm{max}[i] - \mathrm{min}[i] + 1 \] which is used to compute the hash of multiple values. The hash set is a fixed oversized array which will contain all the hashes of already inserted tuples and the result array holds all the group by column plus the aggregation column, which is of type \texttt{uint64\_t}. Then the hash table is built along with the hash set and result arrays containing the group by columns. The aggregation is done at this stage, since the hash table holds the aggregate result for every hash. At the end, results from the hash table are inserted in the result arrays, in the calling function metadata and pointers are updated.
           \end{itemize}
-
 \end{itemize}
+
+\section{Performance measures}
+
+In this section I'm going to provide some performance analysis over the overhead of Apache Calcite + Apache Thrift, which impacts the query execution time.
+
+Measures are taken for every query by restarting the Calcite server, in order to have a clean state, and running the same query 1100 times. The first 100 runs are discarded, while the remaining 1000 runs are used to compute the average and standard deviation of the execution time. This is done in order to avoid measuring the warmup phase of the JVM.
+
+The code for the measures is placed in the \texttt{sycldb-calcite-executor} project in the \texttt{performances} branch. Results are in the \texttt{performances} folder. Files named \texttt{<qxx>.txt} contain the times on C++ side, while files named \texttt{<qxx>-calcite.txt} contain the times on Calcite side. The Jupyter notebook \texttt{performances.ipynb} contains the code to plot the results and compute the average and standard deviation, which has been stored in the file \texttt{performance\_results.csv}. Thrift times are computed by subtracting the time taken by Calcite to process the query to the time measured on C++ side.
+
+Here is a table summarising the results. All the numbers are in microseconds.
+
+\pgfplotstabletypeset[col sep=comma,
+columns={Query,C++ Mean,C++ Std,Java Mean,Java Std,Thrift Mean,Thrift Std},
+columns/Query/.style={string type},
+columns/C++ Mean/.style={fixed,precision=0},
+columns/C++ Std/.style={fixed,precision=0},
+columns/Java Mean/.style={fixed,precision=0},
+columns/Java Std/.style={fixed,precision=0},
+columns/Thrift Mean/.style={fixed,precision=0},
+columns/Thrift Std/.style={fixed,precision=0},
+every head row/.style={before row=\toprule,after row=\midrule},
+every last row/.style={after row=\bottomrule}
+]{performance_results.csv}
+
 
 \end{document}
