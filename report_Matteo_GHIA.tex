@@ -34,9 +34,9 @@ In this report I'm going to describe the work done with Apache Calcite, Apache T
 
 The system is composed of three main components:
 \begin{itemize}
-    \item \textbf{Apache Calcite}, which is a SQL parser, validator, optimizer and planner.
-    \item \textbf{Apache Thrift}, which is a RPC framework for scalable cross-language services development.
-    \item \textbf{SYCLDB}, which is a database system that uses SYCL for parallel query execution.
+    \item \textbf{Apache Calcite}, a SQL parser, validator, optimizer and planner.
+    \item \textbf{Apache Thrift}, a RPC framework for scalable cross-language services development.
+    \item \textbf{SYCLDB}, a database system that uses SYCL for parallel query execution.
 \end{itemize}
 Apache Calcite and SYCLDB run in their own processes, while Apache Thrift is used to communicate between them.
 
@@ -44,9 +44,11 @@ In section \ref{performances}, I'll present performance measures over Apache Cal
 
 In section \ref{setup}, I'll show how to get the system running on a new machine.
 
+In section \ref{future_work}, I'll list some possible improvements that can be applied to the project.
+
 \section{Apache Calcite}
 
-Apache Calcite has been used to parse, validate and optimize SQL queries in order to get a physical plan that can be executed by SYCLDB. It is written in Java and provides a rich set of features for SQL processing. The project is called \texttt{sycldb-adapter} because at the beginning it was meant to be a Calcite adapter for SYCLDB, but during the development I've chosen to separate the two components.
+Apache Calcite has been used to parse, validate and optimize SQL queries in order to get a physical plan that can be executed by SYCLDB. It is written in Java and provides a rich set of features for SQL processing. The project is called \texttt{sycldb-adapter} because at the beginning it was meant to be a Calcite adapter for SYCLDB and thus calling SYCLDB functions directly, but during the development I've chosen to separate the two components.
 
 There are two main parts in this project:
 \begin{itemize}
@@ -56,18 +58,18 @@ There are two main parts in this project:
 
 \subsection{Calcite classes}
 
-Most of the files in the first part follow the pattern \texttt{<OperationName>} and \texttt{<OperationName>Rule}, where the first file contains the implementation of an operation or an object and the second file contains the rule to add to the query planner in order to make it use that operation or object.
+Most of the files in the first part follow the pattern \texttt{<OperationName>} and \texttt{<OperationName>Rule}, where the first file contains the implementation of an operation or an object, and the second file contains the rule that has to be added to the query planner in order to make it use that operation or object.
 \\
 All the \texttt{<OperationName>Rule} files contain just boilerplate code used to convert from a logical operator to the corresponding physical operator which they are describing. The only important thing to notice here is that all the rules are registered using the SYCLDB convention. Conventions in Calcite are used to group together operators that have something in common, such as the same execution engine in this case.
 \\
-The operation/object files define the implementation of the operation or object by extending the corresponding Calcite class or interface. The constructor of these classes is used to set the properties of the operation or object required by the superclass and optionally additional properties specific to the class. They also implement the \texttt{copy} method, which is required by Calcite and it is just boilerplate code. There are also other two methods: \texttt{implement} and \texttt{computeSelfCost}. The first one was used in the code generation step when this project was expected to be a Calcite adapter, but it is not used anymore and empty in most classes. The second one is used to compute the cost of the operation and it was used to be a simple reduction by a factor of ten, in order to make the optimizer prefer SYCLDB operations over default Calcite operations. This is not useful anymore since now we use only SYCLDB operations, and the code should be updated after adding metadata (more on this later) and should take into account number of rows and columns.
+The operation/object files define the implementation of the operation or object by extending the corresponding Calcite class or interface. The constructor of these classes is used to set the properties of the operation or object required by the superclass and optionally additional properties specific to the class. They also implement the \texttt{copy} method, which is required by Calcite and it is just boilerplate code. There are also other two methods: \texttt{implement} and \texttt{computeSelfCost}. The first one was used in the code generation step when this project was expected to be a Calcite adapter, but it is not used anymore and empty in most classes. The second one is used to compute the cost of the operation and it used to be a simple reduction by a factor of ten, in order to make the optimizer prefer SYCLDB operations over default Calcite operations. This is not useful anymore since now we use only SYCLDB operations, and the code should be updated after adding metadata (more on this later) and should take into account number of rows and columns.
 
 There are other files in the first part that are not following this pattern and they have various purposes:
 \begin{itemize}
-    \item \textbf{SycldbSchema} is the class that represents the table schema of SYCLDB. At the moment it is just the hardcoded SSB schema.
-    \item \textbf{SycldbTable} is the class that represents a table in SYCLDB. It is used in the \texttt{SycldbSchema} class to create the tables of the schema. It extends the class \texttt{AbstractQueryableTable} which makes Calcite recognize it as a table on which Relational operations can be applied, as opposed on a table which can only be read and no operations can be applied on it, for example like a Redis index. This is done by implementing the \texttt{asQueryable} method which returns a generic class; this is done in the SycldbQueryable which contains just boilerplate code. The table also implements the \texttt{ProjectableFilterableTable} interface, which provides a \texttt{scan} placeholder method that should be used to apply filters and projections on the table directly without intermediate expressions. I was not able to make this work, so I left it as a placeholder.
+    \item \textbf{SycldbSchema} is the class that represents the database schema of SYCLDB. At the moment it is just the hardcoded SSB schema.
+    \item \textbf{SycldbTable} is the class that represents a table in SYCLDB. It is used in the \texttt{SycldbSchema} class to create the tables of the schema. It extends the class \texttt{AbstractQueryableTable} which makes Calcite recognize it as a table on which Relational operations can be applied, as opposed on a table which can only be read and no operations can be applied on it, for example like a Redis index. This is done by implementing the \texttt{asQueryable} method which returns a generic class, the SycldbQueryable subclass that contains just boilerplate code. The table also implements the \texttt{ProjectableFilterableTable} interface, which provides a \texttt{scan} method that should be used to apply filters and projections on the table directly without intermediate expressions. I was not able to make this work, so I left it as a placeholder.
     \item \textbf{ProjectTableScanRule} was a second attempt to make the optimizer push down projections on the table scan, but it was not successful. The rule is not added to the planner anymore, and I left it for future reference.
-    \item \textbf{SycldbRel} is the class that represents a SYCLDB relational operation. It contains some subclasses that were used when this project was expected to be a Calcite adapter, but they are not used anymore. The class is just used as a base class for the SYCLDB operations, since it extends \texttt{RelNode} and all the opration in Calcite have to extend that class, and the only useful information it holds is the SYCLDB convention definition.
+    \item \textbf{SycldbRel} is the class that represents a SYCLDB relational operation. It contains some subclasses that were used when this project was expected to be a Calcite adapter, but they are not used anymore. The class is just used as a base class for the other SYCLDB operations, since it extends \texttt{RelNode} and all the opration in Calcite have to extend that class. The only useful information left in this class is the SYCLDB convention definition.
     \item \textbf{SYCLDBQueryProcessor} was the initial entry point for the Calcite adapter, but it is not used anymore.
     \item \textbf{SycldbEnumerable} is the class that represents a SYCLDB result for the Enumerable convention. It was used to convert data from SYCLDB convention to the Enumerable convention, but it is not used anymore since now we use only SYCLDB operations.
     \item \textbf{SycldbToEnumerableConverter} and \textbf{SycldbToEnumerableConverterRule} actually follow the pattern described previously, but they are not used anymore since now we use only SYCLDB operations. They were used to define the operation to convert from SYCLDB to Enumerable convention and the corresponding rule to add to the planner.
@@ -78,29 +80,29 @@ There are other files in the first part that are not following this pattern and 
 
 The second part of the project is used to integrate Calcite with Apache Thrift. It contains the autogenerated classes from the Thrift file \texttt{thrift/calciteserver.thrift}. It also contains the classes needed to implement the Thrift server, which are \texttt{ServerCaller}, \texttt{ServerWrapper} and \texttt{ServerHandler}. The first two contain just boilerplate code to start and run the server, while the third one contains the code for handling the requests. The requests for the \texttt{ping} and \texttt{shutdown} methods just print a message and return, while the \texttt{parse} method is the one that handles the SQL query. It takes the SQL string as input and performs all the steps required to get the physical plan that will be passed to SYCLDB for execution.
 \begin{itemize}
-    \item \textbf{Query parsing and definition of the schema}. The SQL string is converted into an AST which is implemented by Calcite class \texttt{SqlNode}.
-    \item \textbf{Validation of the query and convert to logical plan}. The schema is used to define a \texttt{catalogReader} which contains the information about the tables and their columns. At the moment it is just a collection of tables and columns, with no metadata. The parsed AST is then validated and we obtain an SqlNode which contains the validated query tree. This data structure is then converted into a logical plan, which is represented in the class \texttt{RelNode}
-    \item \textbf{Optimization into physical plan}. The logical plan is then converted into a physical plan via the planner. Conversion rules and optimization rules are added in order to make the optimizer recognize Sycldb operations, which have been defined in the classes described previously, and basic built-in optimizations such as selection push down.
+    \item \textbf{Query parsing and definition of the schema}. The SQL string is converted into an AST which is implemented by the Calcite class \texttt{SqlNode}.
+    \item \textbf{Validation of the query and convert to logical plan}. The schema is used to define a \texttt{catalogReader} which contains the information about the tables and their columns. At the moment it is just a collection of tables and columns, with no metadata. The parsed AST is then validated and we obtain a \texttt{SqlNode} which contains the validated query tree. This data structure is then converted into a logical plan, which is represented in the class \texttt{RelNode}.
+    \item \textbf{Optimization into physical plan}. The logical plan is then converted into a physical plan via the planner. Conversion rules and optimization rules are added in order to make the optimizer recognize Sycldb operations, which have been defined in the classes described previously, and basic built-in optimizations such as selection push-down.
     \item \textbf{Conversion into Thrift classes}. Using the \texttt{SycldbJsonConverter} described previously, the JSON representation of the physical plan is used to build the Thrift classes, which are then returned by the function and serialized and sent by the Thrift server to the client which made the request.
 \end{itemize}
 
 \section{Apache Thrift}
 
-Apache Thrift has been used as a bridge between Apache Calcite and SYCLDB executor. It takes care of running the HTTP server and providing an RPC interface which abstracts all the physical communication.
+Apache Thrift has been used as a bridge between Apache Calcite and SYCLDB executor. It takes care of running the HTTP server and providing a RPC interface which abstracts all the physical communication.
 
 The file which contains the interfaces and data structures definitions is placed inside the \texttt{sycldb-adapter} project at the path \texttt{thrift/calciteserver.thrift}. The interfaces are defined in the \texttt{service} block, while the data structures are in \texttt{struct}/\texttt{enum} blocks. Interfaces are just functions and don't require to be explained, while data structures require more attention.
 \begin{itemize}
     \item \textbf{PlanResult} is the result returned by the \texttt{parse} function. It contains two fields:
           \begin{itemize}
               \item \textbf{oldJson} is the original JSON which is given by Calcite. It is returned just for debug and development purposes.
-              \item \textbf{rels} is the list of operations after they have been converted into Thrift data structures by the \texttt{SycldbJsonConverter} class in Calcite. It is a list of \texttt{RelNode} objects (not Calcite class, but the custom one described later).
+              \item \textbf{rels} is the list of operations after they have been converted into Thrift data structures by the \texttt{SycldbJsonConverter} class in Calcite. It is a list of \texttt{RelNode} objects (not the Calcite class, but the Thrift struct described later).
           \end{itemize}
-    \item \textbf{RelNode} is the top-level class describing an operation. It contains various fields which depend on the type of operations, except \texttt{id} which is the progressive id of the operation and \texttt{relOp} which is the enum that identifies the type of operation. The other fields are specific to a certain type of operation and they are \texttt{null} in other operation types.
+    \item \textbf{RelNode} is the top-level class describing an operation. It contains various fields which depend on the type of operations, except \texttt{id} which is the progressive id of the operation, and \texttt{relOp} which is the enum that identifies the type of operation. The other fields are specific to a certain type of operation and they are \texttt{null} in other operation types.
           \begin{itemize}
               \item \textbf{tables} is a list of string containing the table names in a table scan. It is always of length 1, but I've left it as a list since it a list in the original JSON.
               \item \textbf{inputs} is present in table scan and join operations. It is always empty in SSB table scans, but it may have a use in general. In joins it represents the operation ids whose output is used in the join operation.
               \item \textbf{condition} is present in joins and selections. It represent the filtering condition in both cases and it can be a recursive data structure (described later).
-              \item \textbf{joinType} is the type of the join. It is always "inner" in my implementation, but it could be a different type if implemented in Calcite.
+              \item \textbf{joinType} is the type of the join. It is always equal to "inner" in my implementation, but it could be a different type if the correct rules and configurations are added to Calcite.
               \item \textbf{fields} are the output field names of a project operation.
               \item \textbf{exprs} is the list of expressions describing the output fields of a project operation.
               \item \textbf{group} are the column indexes on which a group by is applied in an aggregate operation.
@@ -108,14 +110,14 @@ The file which contains the interfaces and data structures definitions is placed
           \end{itemize}
     \item \textbf{ExprType} describes an expression and can be a nested data structure. It can be of three types, described in the \texttt{exprType} enum field: literal, column or expression.
           \begin{itemize}
-              \item \textbf{literal}: the instance represents a literal number or a range of values. The \texttt{type} string represents which type of literal is, while the \texttt{literal} field contains the data about the literal.
+              \item \textbf{literal}: the instance represents a literal number or a range of values. The \texttt{type} string attribute represents which type of literal is, while the \texttt{literal} field contains the data about the literal.
               \item \textbf{column}: the instance represent a column reference. The \texttt{input} field represents the column index and the \texttt{name} field represents the column name.
-              \item \textbf{expression}: the instance represents a nested expression. The \texttt{op} string represents the operation between the input operands and the \texttt{operands} field is the list of operands. Sometimes \texttt{type} field is present in the original JSON representation and it is kept here, but it is currently not used in the executor code.
+              \item \textbf{expression}: the instance represents a nested expression. The \texttt{op} string attribute represents the operation between the input operands and the \texttt{operands} field is the list of operands. Sometimes \texttt{type} field is present in the original JSON representation and it is kept here, but it is currently not used in the executor code.
           \end{itemize}
     \item \textbf{LiteralType} contains the information about a literal. The \texttt{literalOption} encodes if the information is about a single literal or a range. In the first case, \texttt{value} contains the literal. In the second case, \texttt{rangeSet} contains the range. There are two possibilities for a range:
           \begin{itemize}
               \item \textbf{set} is a set of values between a minimum and a maximum. The attribute is always a list of size one, with the sub list representing the range. The first value of the list represent which kind of set is and it is always a "closed" set in our case, i.e. minimum and maximum are included. The following two values in the list represent minimum and maximum.
-              \item \textbf{singletons} encodes different values that are possible, i.e. a list of equal conditions in logical OR. The attribute is a list of variable length and each element is a list that contains the information about one value. in the sub list, the first element is always "singleton", while the second represents the actual number.
+              \item \textbf{singletons} encodes different values that are possible, i.e. a list of equal conditions in logical OR. The attribute is a list of variable length and each element is a list that contains the information about one value. in the sub list, the first element is always the string "singleton", while the second represents the actual number.
           \end{itemize}
     \item \textbf{AggType} contains the information about one aggregation.
           \begin{itemize}
@@ -129,7 +131,7 @@ The file which contains the interfaces and data structures definitions is placed
 
 \section{SYCLDB executor}
 
-The SYCLDB executor is the component that actually executes the query. It is written in SYCL, an abstraction on top of C++ for parallel execution over multiple heterogeneous platforms. The project is called \texttt{sycldb-calcite-executor} and I've worked on code and algorithms which run in plain C++, while Ivan KABADZHOV has implemented the kernels in SYCL.
+The SYCLDB executor is the component that actually executes the query. It is written in SYCL, an abstraction on top of C++ for parallel execution over multiple heterogeneous platforms. The project is called \texttt{sycldb-calcite-executor} and I've worked on code and algorithms which run in plain C++, while Ivan KABADZHOV has implemented the operations in SYCL.
 
 The job of the executor is reading the SQL file containing the query, sending it over Apache Calcite via Apache Thrift, reading the physical plan obtained and executing the operations. I'll focus on the last part since the first ones are trivial.
 
@@ -295,4 +297,13 @@ make
 ./client <query_file_path>
 \end{verbatim}
 
+\section{Future work} \label{future_work}
+
+There are many possible improvements that can be applied to the project, most of them are related to the Calcite part of the project.
+\begin{itemize}
+    \item \textbf{Metadata}. At the moment, the Calcite schema is just a collection of tables and columns, with no metadata. This can be improved by adding metadata which can in turn be used in the cost function and in general optimizations. For example, the number of rows and columns can be used to compute the cost of an operation, for example suggesting the optimizer to add a projection right after a table scan in order to reduce the number of columns and thus the amount of data to be processed in the following operations.
+    \item \textbf{Improved operations}. There are some operations that can be improved, such as the join operations. At the moment, only the inner join is taken into account by the optimizer, but it can be extended to support other join types such as semi joins.
+    \item \textbf{Custom dump plan}. The JSON dump plan provided by Calcite has a lot of information that is not used in the executor or it can be improved with extra information. Writing a custom dump plan that contains only the information needed by the executor will also reduce the computation done on Java side, since currently the JSON dump plan is parsed and then converted into Thrift classes, which is an extra step that can be avoided.
+    \item \textbf{Reordering of operations}. The optimizer can be improved by adding rules that reorder operations in order to support kernel fusion in SYCL. This can be done as an initial solution by reordering manually by using a topological sort of the DAG of operations, but it can be improved by adding optimization rules that reorder operations directly in the planner.
+\end{itemize}
 \end{document}
